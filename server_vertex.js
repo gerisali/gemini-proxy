@@ -14,7 +14,7 @@ import { GoogleAuth } from "google-auth-library";
 // === Config ===
 const PORT = process.env.PORT || 8080;
 const PROJECT_ID = "gemini-live-477912";
-const LOCATION = "us-central1";
+const LOCATION = "us-central1 (Iowa)";
 const MODEL = `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025`;
 
 // === Key setup ===
@@ -166,3 +166,4 @@ async function handleGeminiLiveSession(data, unityWS) {
     unityWS.send(JSON.stringify({ error: err.message }));
   }
 }
+
