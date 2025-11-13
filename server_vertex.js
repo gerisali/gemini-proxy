@@ -1,7 +1,4 @@
-// server_vertex.js
-// -----------------------------------------------------
-// Gemini 2.5 Native Audio Preview (Vertex AI Live API)
-// Based on GoogleCloudPlatform/generative-ai notebook
+// server_vertex.js (FIXED)
 // -----------------------------------------------------
 
 import express from "express";
@@ -14,7 +11,7 @@ import { GoogleAuth } from "google-auth-library";
 // === Config ===
 const PORT = process.env.PORT || 8080;
 const PROJECT_ID = "gemini-live-477912";
-const LOCATION = "us-central1 (Iowa)";
+const LOCATION = "us-central1";
 const MODEL = `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025`;
 
 // === Key setup ===
@@ -33,138 +30,108 @@ async function getAccessToken() {
   return tokenResponse.token;
 }
 
-// === Express setup ===
+// === Express ===
 const app = express();
 app.get("/", (req, res) =>
-  res.send("✅ Vertex Gemini Live Proxy (Native Audio) aktif!")
-);
-const server = app.listen(PORT, () =>
-  console.log(`🚀 Vertex Proxy dinliyor port ${PORT}`)
+  res.send("Vertex Gemini Live Proxy ACTIVE")
 );
 
-// === WebSocket: Unity <-> Proxy ===
+const server = app.listen(PORT, () =>
+  console.log("Listening on port", PORT)
+);
+
+// === WebSocket (Unity <-> Proxy) ===
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", async (unityWS) => {
-  console.log("🟢 Unity bağlandı (Vertex Live Mode)");
+  console.log("Unity connected → creating LiveSession");
 
-  unityWS.on("message", async (msg) => {
+  // Create ONE LiveSession per Unity connection
+  const token = await getAccessToken();
+
+  const createUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025/liveSessions`;
+  
+  const createBody = {
+    model: MODEL,
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      audioConfig: { voiceConfig: { voiceName: "charlie" } },
+    },
+  };
+
+  const res = await fetch(createUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(createBody),
+  });
+
+  const session = await res.json();
+  const sessionName = session.session?.name || session.name;
+
+  console.log("LiveSession:", sessionName);
+
+  // CONNECT TO VERTEX WS  
+  const vertexWS = new WS(
+    `wss://${LOCATION}-aiplatform.googleapis.com/v1beta/${sessionName}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  // Forward messages Unity → Vertex
+  unityWS.on("message", (msg) => {
     const data = JSON.parse(msg.toString());
-    if (data.type === "audio" || data.type === "text") {
-      await handleGeminiLiveSession(data, unityWS);
+
+    if (data.type === "text") {
+      vertexWS.send(
+        JSON.stringify({
+          clientInput: {
+            turns: [{ role: "user", parts: [{ text: data.text }] }],
+          },
+        })
+      );
+    }
+
+    if (data.type === "audio") {
+      vertexWS.send(
+        JSON.stringify({
+          clientInput: {
+            turns: [
+              {
+                role: "user",
+                parts: [{
+                  inlineData: {
+                    mimeType: "audio/wav",
+                    data: data.audioBase64,
+                  },
+                }],
+              },
+            ],
+          },
+        })
+      );
     }
   });
 
-  unityWS.on("close", () => console.log("🔴 Unity bağlantısı kapandı"));
-});
+  // Forward messages Vertex → Unity
+  vertexWS.on("message", (msg) => {
+    try {
+      const parsed = JSON.parse(msg.toString());
 
-// === LiveSession handler ===
-async function handleGeminiLiveSession(data, unityWS) {
-  try {
-    const token = await getAccessToken();
-
-    // 1️⃣ Create LiveSession
-    const sessionUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025/liveSessions`;
-    const createBody = {
-      model: MODEL,
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        audioConfig: { voiceConfig: { voiceName: "charlie" } },
-      },
-    };
-
-    const createRes = await fetch(sessionUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(createBody),
-    });
-
-    if (!createRes.ok) {
-      const errText = await createRes.text();
-      console.error("❌ LiveSession oluşturulamadı:", errText);
-      unityWS.send(JSON.stringify({ error: errText }));
-      return;
-    }
-
-    const session = await createRes.json();
-    const liveUrl = session.session?.name || session.name;
-    console.log("✅ LiveSession oluşturuldu:", liveUrl);
-
-    // 2️⃣ Connect WebSocket
-    const wsUrl = `wss://${LOCATION}-aiplatform.googleapis.com/v1beta/${liveUrl}`;
-    console.log("🌐 Vertex LiveSession WebSocket'e bağlanılıyor...");
-
-    const geminiWS = new WS(wsUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    geminiWS.on("open", () => {
-      console.log("✅ Vertex LiveSession WS bağlandı!");
-
-      // 3️⃣ Send initial input
-      const inputData =
-        data.type === "text"
-          ? {
-              clientInput: {
-                turns: [
-                  {
-                    role: "user",
-                    parts: [{ text: data.text }],
-                  },
-                ],
-              },
-            }
-          : {
-              clientInput: {
-                turns: [
-                  {
-                    role: "user",
-                    parts: [
-                      {
-                        inlineData: {
-                          mimeType: "audio/wav",
-                          data: data.audioBase64,
-                        },
-                      },
-                    ],
-                  },
-                ],
-              },
-            };
-
-      geminiWS.send(JSON.stringify(inputData));
-      console.log("📤 Input gönderildi (Vertex Live)");
-    });
-
-    geminiWS.on("message", (msg) => {
-      try {
-        const parsed = JSON.parse(msg.toString());
-        if (parsed.serverContent?.modalities?.includes("AUDIO")) {
-          unityWS.send(
-            JSON.stringify({ type: "audio_chunk", data: parsed.serverContent })
-          );
-        }
-      } catch (err) {
-        console.error("Parse error:", err.message);
+      if (parsed.serverContent?.modalities?.includes("AUDIO")) {
+        unityWS.send(
+          JSON.stringify({
+            type: "audio_chunk",
+            data: parsed.serverContent,
+          })
+        );
       }
-    });
+    } catch (e) {
+      console.log("PARSE ERROR:", e.message);
+    }
+  });
 
-    geminiWS.on("close", () => {
-      console.log("🔴 Vertex LiveSession kapandı");
-      unityWS.send(JSON.stringify({ type: "end" }));
-    });
-
-    geminiWS.on("error", (err) => {
-      console.error("❌ Vertex WS hata:", err.message);
-      unityWS.send(JSON.stringify({ error: err.message }));
-    });
-  } catch (err) {
-    console.error("Token veya bağlantı hatası:", err.message);
-    unityWS.send(JSON.stringify({ error: err.message }));
-  }
-}
-
-
+  vertexWS.on("close", () => unityWS.send(JSON.stringify({ type: "end" })));
+  vertexWS.on("error", (e) => unityWS.send(JSON.stringify({ error: e.message })));
+});
