@@ -1,16 +1,15 @@
 {
-  "name": "gemini-proxy",
+  "name": "gemini-vertex-proxy",
   "version": "1.0.0",
-  "main": "server.js",
+  "main": "server_vertex.js",
   "type": "module",
   "dependencies": {
-      "express": "^4.19.2",
-      "ws": "^8.17.0",
-      "node-fetch": "^3.3.2",
-      "google-auth-library": "^9.8.0"
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "node-fetch": "^3.3.2",
+    "google-auth-library": "^9.8.0"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server_vertex.js"
   }
 }
-
