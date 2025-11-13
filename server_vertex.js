@@ -7,7 +7,6 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { WebSocket as WS } from "ws";
 import fetch from "node-fetch";
-import fs from "fs";
 import { GoogleAuth } from "google-auth-library";
 
 const PORT = process.env.PORT || 8080;
@@ -125,4 +124,5 @@ async function connectToGeminiVertex(data, unityWS) {
     unityWS.send(JSON.stringify({ error: error.message }));
   }
 }
+
 
