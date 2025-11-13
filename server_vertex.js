@@ -40,24 +40,26 @@ const server = app.listen(PORT, () => console.log("Listening on", PORT));
 // === WEBSOCKET SERVER ===
 const wss = new WebSocketServer({ server });
 
-wss.on("connection", async (unityWS) => {
-  console.log("🔵 Unity Connected");
-  console.log("RAW WS MESSAGE:", msg.toString().slice(0, 200));
+unityWS.on("message", async (msg) => {
+  console.log("RAW WS MESSAGE FROM UNITY:", msg.toString().slice(0, 200));
 
-  async function stt(base64) {
-    const url = `https://speech.googleapis.com/v1/speech:recognize`;
-    const token = await getToken();
+  let data;
+  try {
+    data = JSON.parse(msg.toString());
+  } catch (e) {
+    console.error("JSON parse error from Unity:", e.message);
+    return;
+  }
 
-    const body = {
-      config: {
-        encoding: "LINEAR16",
-        sampleRateHertz: 16000,
-        languageCode: "en-US",
-      },
-      audio: {
-        content: base64,
-      },
-    };
+  if (data.type !== "audio") {
+    console.log("Ignoring non-audio WS message");
+    return;
+  }
+
+  console.log("🎤 Received audio message from Unity");
+  ...
+});
+
 
     const res = await fetch(url + `?key=${process.env.GOOGLE_API_KEY}`, {
       method: "POST",
@@ -151,4 +153,5 @@ wss.on("connection", async (unityWS) => {
     }
   });
 });
+
 
