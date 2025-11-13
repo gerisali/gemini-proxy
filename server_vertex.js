@@ -1,7 +1,7 @@
 // server_voice_realtime.js
 // ---------------------------------------------------------------
-// UNITY → Audio(WAV/Base64) → STT → Gemini → TTS → UNITY (Audio)
-// Realtime Voice Interaction (Most Stable & Fastest Path)
+// UNITY → PCM(AUDIO) → WAV → STT → Gemini → TTS → UNITY(AUDIO)
+// Full realtime voice proxy (fastest & most stable)
 // ---------------------------------------------------------------
 
 import express from "express";
@@ -15,8 +15,9 @@ const PORT = process.env.PORT || 10000;
 const PROJECT_ID = "gemini-live-477912";
 const LOCATION = "us-central1";
 
-// Gemini model (Realtime, FAST)
-const GEMINI_MODEL = `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-1.5-flash`;
+// Real-time Gemini text model (fast, reliable)
+const GEMINI_MODEL =
+  `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-1.5-flash`;
 
 // === GOOGLE AUTH ===
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
@@ -36,10 +37,37 @@ async function getAccessToken() {
 
 // === EXPRESS SERVER ===
 const app = express();
-app.get("/", (_, res) => res.send("Voice Realtime Proxy OK"));
+app.get("/", (_, res) => res.send("Voice Realtime Proxy Running"));
 const server = app.listen(PORT, () =>
   console.log("Listening on port", PORT)
 );
+
+// === PCM → WAV CONVERTER ===
+function pcm16ToWav(base64Pcm, sampleRate = 16000) {
+  const pcm = Buffer.from(base64Pcm, "base64");
+  const header = Buffer.alloc(44);
+
+  // "RIFF"
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+
+  // fmt chunk
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+
+  // data chunk
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+
+  return Buffer.concat([header, pcm]).toString("base64");
+}
 
 // === WEBSOCKET SERVER ===
 const wss = new WebSocketServer({ server });
@@ -48,66 +76,74 @@ wss.on("connection", async (unityWS) => {
   console.log("🔵 Unity Connected");
 
   unityWS.on("message", async (msg) => {
-    let dataRaw = msg.toString();
-    console.log("RAW FROM UNITY:", dataRaw.slice(0, 200));
+    const raw = msg.toString();
+    console.log("🔥 RAW FROM UNITY:", raw.slice(0, 200));
 
+    // Parse JSON
     let data;
     try {
-      data = JSON.parse(dataRaw);
+      data = JSON.parse(raw);
     } catch (e) {
-      console.error("JSON Parse Error from Unity:", e.message);
+      console.error("❌ JSON Parse Error:", e.message);
       return;
     }
 
     if (data.type !== "audio") {
-      console.log("Ignoring non-audio WS message");
+      console.log("↪️ Non-audio WS message ignored");
       return;
     }
 
-    try {
-      console.log("🎤 Audio received, running STT...");
+    console.log("🎤 Audio message RECEIVED from Unity");
 
-      // === SPEECH TO TEXT ===
-      const transcript = await speechToText(data.audioBase64);
+    try {
+      // === PCM → WAV ===
+      console.log("🔧 Converting PCM → WAV (for STT)...");
+      const wavBase64 = pcm16ToWav(data.audioBase64, 16000);
+
+      // === STT ===
+      console.log("🗣️ Running Speech-to-Text...");
+      const transcript = await speechToText(wavBase64);
 
       console.log("🗣️ USER SAID:", transcript);
       unityWS.send(JSON.stringify({ type: "transcript", text: transcript }));
 
-      if (!transcript) return;
+      if (!transcript || transcript.trim().length === 0) {
+        console.log("⚠️ Empty transcript → stopping pipeline");
+        return;
+      }
 
-      // === GEMINI REPLY ===
+      // === GEMINI ===
       console.log("🤖 Gemini generating reply...");
-      const replyText = await geminiGenerate(transcript);
-      console.log("🤖 Gemini:", replyText);
+      const aiText = await geminiGenerate(transcript);
 
-      unityWS.send(JSON.stringify({ type: "ai_text", text: replyText }));
+      console.log("🤖 Gemini:", aiText);
+      unityWS.send(JSON.stringify({ type: "ai_text", text: aiText }));
 
       // === TTS ===
-      console.log("🔊 Converting reply to speech...");
-      const audioBase64 = await textToSpeech(replyText);
+      console.log("🔊 TTS converting reply to speech...");
+      const audioBase64 = await textToSpeech(aiText);
 
+      console.log("🔥 Sending audio back to Unity");
       unityWS.send(
         JSON.stringify({
           type: "audio_output",
-          audioBase64: audioBase64
+          audioBase64: audioBase64,
         })
       );
-      console.log("🔥 Reply sent to Unity");
 
     } catch (err) {
-      console.error("❌ PIPELINE ERROR:", err.message);
+      console.error("❌ Pipeline Error:", err.message);
       unityWS.send(JSON.stringify({ error: err.message }));
     }
   });
 });
 
-
 // ------------------------------------------------------------
 //  SPEECH TO TEXT (Google Speech API)
 // ------------------------------------------------------------
-async function speechToText(base64Audio) {
+async function speechToText(wavBase64) {
   const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY missing.");
+  if (!apiKey) throw new Error("GOOGLE_API_KEY missing");
 
   const url = `https://speech.googleapis.com/v1/speech:recognize?key=${apiKey}`;
 
@@ -117,7 +153,7 @@ async function speechToText(base64Audio) {
       sampleRateHertz: 16000,
       languageCode: "en-US",
     },
-    audio: { content: base64Audio },
+    audio: { content: wavBase64 },
   };
 
   const res = await fetch(url, {
@@ -130,9 +166,8 @@ async function speechToText(base64Audio) {
   return json.results?.[0]?.alternatives?.[0]?.transcript || "";
 }
 
-
 // ------------------------------------------------------------
-//  GEMINI TEXT REPLY (GenerateContent)
+//  GEMINI TEXT GENERATION
 // ------------------------------------------------------------
 async function geminiGenerate(userText) {
   const token = await getAccessToken();
@@ -143,9 +178,9 @@ async function geminiGenerate(userText) {
     contents: [
       {
         role: "user",
-        parts: [{ text: userText }]
-      }
-    ]
+        parts: [{ text: userText }],
+      },
+    ],
   };
 
   const res = await fetch(url, {
@@ -158,23 +193,25 @@ async function geminiGenerate(userText) {
   });
 
   const json = await res.json();
-  return json.candidates?.[0]?.content?.parts?.[0]?.text || "I could not understand.";
+  return (
+    json.candidates?.[0]?.content?.parts?.[0]?.text ||
+    "I'm not sure how to respond."
+  );
 }
 
-
 // ------------------------------------------------------------
-//  TEXT TO SPEECH (Google TTS API)
+//  TEXT TO SPEECH (TTS)
 // ------------------------------------------------------------
 async function textToSpeech(text) {
   const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY missing.");
+  if (!apiKey) throw new Error("GOOGLE_API_KEY missing");
 
   const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
 
   const body = {
-    input: { text: text },
+    input: { text },
     voice: { languageCode: "en-US", name: "en-US-Journey-F" },
-    audioConfig: { audioEncoding: "LINEAR16" }
+    audioConfig: { audioEncoding: "LINEAR16" },
   };
 
   const res = await fetch(url, {
