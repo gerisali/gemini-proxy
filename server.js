@@ -1,3 +1,18 @@
+{
+  "name": "gemini-proxy",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "module",
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0",
+    "node-fetch": "^3.3.2"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
+
 import express from "express";
 import { WebSocketServer } from "ws";
 import fetch from "node-fetch";
@@ -107,3 +122,4 @@ async function handleGeminiStream(data, unityWS) {
     unityWS.send(JSON.stringify({ error: err.message }));
   });
 }
+
