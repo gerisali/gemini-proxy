@@ -42,6 +42,7 @@ const wss = new WebSocketServer({ server });
 
 wss.on("connection", async (unityWS) => {
   console.log("🔵 Unity Connected");
+  console.log("RAW WS MESSAGE:", msg.toString().slice(0, 200));
 
   async function stt(base64) {
     const url = `https://speech.googleapis.com/v1/speech:recognize`;
@@ -150,3 +151,4 @@ wss.on("connection", async (unityWS) => {
     }
   });
 });
+
