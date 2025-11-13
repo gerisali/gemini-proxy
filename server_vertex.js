@@ -64,7 +64,7 @@ async function handleGeminiLiveSession(data, unityWS) {
     const token = await getAccessToken();
 
     // 1️⃣ Create LiveSession
-    const sessionUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/liveSessions`;
+    const sessionUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025/liveSessions`;
     const createBody = {
       model: MODEL,
       generationConfig: {
@@ -166,4 +166,5 @@ async function handleGeminiLiveSession(data, unityWS) {
     unityWS.send(JSON.stringify({ error: err.message }));
   }
 }
+
 
