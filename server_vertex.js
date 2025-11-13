@@ -12,7 +12,7 @@ import { GoogleAuth } from "google-auth-library";
 const PORT = process.env.PORT || 8080;
 const PROJECT_ID = "gemini-live-477912";
 const LOCATION = "us-central1";
-const MODEL = `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025`;
+const MODEL = `projects/${PROJECT_ID}/locations/us-central1/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025`;
 
 // === Key setup ===
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
@@ -49,7 +49,7 @@ wss.on("connection", async (unityWS) => {
   // Create ONE LiveSession per Unity connection
   const token = await getAccessToken();
 
-  const createUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025/liveSessions`;
+const createUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.5-flash-native-audio-preview-09-2025/liveSessions`;
   
   const createBody = {
     model: MODEL,
