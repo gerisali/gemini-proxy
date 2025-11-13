@@ -1,23 +1,22 @@
-// server_vertex.js — Gemini 2.0 Flash EXP (WebSocket Native Audio)
-// ---------------------------------------------------------------
+// server_voice_realtime.js
+// ------------------------------------------------------------
+// Unity → Audio (WAV) → Google STT → Gemini Realtime → Google TTS → Unity
+// ------------------------------------------------------------
 
 import express from "express";
 import { WebSocketServer } from "ws";
-import { WebSocket as WS } from "ws";
-import fetch from "node-fetch";
 import fs from "fs";
+import fetch from "node-fetch";
 import { GoogleAuth } from "google-auth-library";
+import { WebSocket as WS } from "ws";
 
-// === Config ===
+// === CONFIG ===
 const PORT = process.env.PORT || 10000;
 const PROJECT_ID = "gemini-live-477912";
 const LOCATION = "us-central1";
+const GEMINI_MODEL = "models/gemini-1.5-flash"; // Realtime model
 
-// ✔ WebSocket destekli doğru model
-const MODEL =
-  `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-2.0-flash-exp`;
-
-// === Key setup ===
+// === GOOGLE AUTH ===
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
   fs.writeFileSync("key.json", process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 }
@@ -27,123 +26,127 @@ const auth = new GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/cloud-platform"],
 });
 
-// === Get Access Token ===
-async function getAccessToken() {
+async function getToken() {
   const client = await auth.getClient();
-  const tokenResponse = await client.getAccessToken();
-  return tokenResponse.token;
+  const t = await client.getAccessToken();
+  return t.token;
 }
 
+// === BASIC SERVER ===
 const app = express();
-app.get("/", (req, res) =>
-  res.send("Vertex Gemini 2.0 Flash EXP WS Proxy OK")
-);
+app.get("/", (_, res) => res.send("Realtime Voice Proxy Running"));
+const server = app.listen(PORT, () => console.log("Listening on", PORT));
 
-const server = app.listen(PORT, () =>
-  console.log(`Listening on port ${PORT}`)
-);
-
+// === WEBSOCKET SERVER ===
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", async (unityWS) => {
-  console.log("Unity connected → creating LiveSession");
+  console.log("🔵 Unity Connected");
 
-  const token = await getAccessToken();
+  async function stt(base64) {
+    const url = `https://speech.googleapis.com/v1/speech:recognize`;
+    const token = await getToken();
 
-  // ✔ Doğru: 2.0 Flash EXP WebSocket Live API endpoint
-  const createUrl =
-    `https://${LOCATION}-aiplatform.googleapis.com/v1beta/${MODEL}/liveSessions`;
+    const body = {
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 16000,
+        languageCode: "en-US",
+      },
+      audio: {
+        content: base64,
+      },
+    };
 
-  const createBody = {
-    model: MODEL,
-    generationConfig: {
-      responseModalities: ["AUDIO"],
-      audioConfig: { voiceConfig: { voiceName: "charlie" } },
-    },
-  };
+    const res = await fetch(url + `?key=${process.env.GOOGLE_API_KEY}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
 
-  const createRes = await fetch(createUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(createBody),
-  });
-
-  const raw = await createRes.text();
-  let session;
-  try {
-    session = JSON.parse(raw);
-  } catch {
-    console.error("HTML ERROR:", raw);
-    unityWS.send(JSON.stringify({ error: "Failed to create LiveSession" }));
-    return;
+    const json = await res.json();
+    return json.results?.[0]?.alternatives?.[0]?.transcript || "";
   }
 
-  const sessionName = session.session?.name || session.name;
-  console.log("LiveSession:", sessionName);
+  async function gemini(text) {
+    const token = await getToken();
 
-  // === Vertex Live WebSocket ===
-  const vertexWS = new WS(
-    `wss://${LOCATION}-aiplatform.googleapis.com/v1beta/${sessionName}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
+    const url = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/${GEMINI_MODEL}:generateContent`;
 
-  vertexWS.on("open", () => {
-    console.log("Vertex Live WS connected");
-  });
+    const body = {
+      contents: [{ role: "user", parts: [{ text }] }],
+      generationConfig: { maxOutputTokens: 128 },
+    };
 
-  // Unity → Vertex
-  unityWS.on("message", (msg) => {
-    const data = JSON.parse(msg.toString());
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
 
-    if (data.type === "audio") {
-      vertexWS.send(
+    const json = await res.json();
+    return json.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  }
+
+  async function tts(text) {
+    const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.GOOGLE_API_KEY}`;
+
+    const body = {
+      input: { text },
+      voice: { languageCode: "en-US", name: "en-US-Studio-M" },
+      audioConfig: { audioEncoding: "LINEAR16" },
+    };
+
+    const res = await fetch(url, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const json = await res.json();
+    return json.audioContent; // base64 wav
+  }
+
+  // === UNITY → AUDIO INPUT ===
+  unityWS.on("message", async (msg) => {
+    try {
+      const data = JSON.parse(msg.toString());
+      if (data.type !== "audio") return;
+
+      console.log("🎤 Received mic audio from Unity");
+
+      // 1) STT
+      const userText = await stt(data.audioBase64);
+      console.log("🗣️ User said:", userText);
+
+      // Send interim transcription (optional)
+      unityWS.send(JSON.stringify({ type: "transcript", text: userText }));
+
+      if (!userText) return;
+
+      // 2) Gemini Realtime
+      const aiText = await gemini(userText);
+      console.log("🤖 Gemini:", aiText);
+
+      // Send text (optional)
+      unityWS.send(JSON.stringify({ type: "text_response", text: aiText }));
+
+      // 3) TTS
+      const audioB64 = await tts(aiText);
+
+      console.log("🔊 Sending audio response to Unity");
+
+      unityWS.send(
         JSON.stringify({
-          clientInput: {
-            turns: [
-              {
-                role: "user",
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: "audio/wav",
-                      data: data.audioBase64,
-                    },
-                  },
-                ],
-              },
-            ],
-          },
+          type: "audio_output",
+          audioBase64: audioB64,
         })
       );
+    } catch (e) {
+      console.error("❌ ERROR:", e);
     }
   });
-
-  // Vertex → Unity
-  vertexWS.on("message", (msg) => {
-    try {
-      const parsed = JSON.parse(msg.toString());
-
-      if (parsed.serverContent?.modalities?.includes("AUDIO")) {
-        unityWS.send(
-          JSON.stringify({
-            type: "audio_chunk",
-            data: parsed.serverContent,
-          })
-        );
-      }
-    } catch (err) {
-      console.error("Parse error:", err);
-    }
-  });
-
-  vertexWS.on("close", () =>
-    unityWS.send(JSON.stringify({ type: "end" }))
-  );
-
-  vertexWS.on("error", (e) =>
-    unityWS.send(JSON.stringify({ error: e.message }))
-  );
 });
