@@ -1,4 +1,8 @@
 // server_vertex.js
+import fs from "fs";
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  fs.writeFileSync("key.json", process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+}
 import express from "express";
 import { WebSocketServer } from "ws";
 import { WebSocket as WS } from "ws";
@@ -121,3 +125,4 @@ async function connectToGeminiVertex(data, unityWS) {
     unityWS.send(JSON.stringify({ error: error.message }));
   }
 }
+
