@@ -55,7 +55,7 @@ async function connectToGeminiVertex(data, unityWS) {
   try {
     const accessToken = await getAccessToken();
 
-    const url = `wss://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/endpoints/openapi-endpoint:streamGenerateContent`;
+    const url = `wss://${LOCATION}-aiplatform.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/${LOCATION}/liveSessions`;
 
     console.log("🌐 Vertex Live API bağlantısı açılıyor...");
 
@@ -124,5 +124,6 @@ async function connectToGeminiVertex(data, unityWS) {
     unityWS.send(JSON.stringify({ error: error.message }));
   }
 }
+
 
 
