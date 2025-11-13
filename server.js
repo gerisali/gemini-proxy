@@ -44,7 +44,7 @@ wss.on("connection", (ws) => {
 
 // ---- Gemini Live Stream Handler ----
 async function handleGeminiStream(data, unityWS) {
-  const model = "models/gemini-2.5-flash";
+  const model = "models/gemini-2.5-flash-native-audio-preview-09-2025";
   const url = `wss://generativelanguage.googleapis.com/v1beta/${model}:streamGenerateContent?alt=sse`;
 
   console.log("🌐 Connecting to Gemini Live...");
@@ -107,5 +107,6 @@ async function handleGeminiStream(data, unityWS) {
     unityWS.send(JSON.stringify({ error: err.message }));
   });
 }
+
 
 
