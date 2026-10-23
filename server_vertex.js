@@ -1,7 +1,8 @@
-// server_voice_realtime.js
+// server_vertex.js
 // ---------------------------------------------------------------
 // UNITY → PCM(AUDIO) → WAV → STT → Gemini → TTS → UNITY(AUDIO)
-// Full realtime voice proxy (fastest & most stable)
+// Voice proxy between a Unity client and Google Cloud services.
+// Configuration comes from environment variables (see .env.example).
 // ---------------------------------------------------------------
 
 import express from "express";
@@ -12,12 +13,23 @@ import { GoogleAuth } from "google-auth-library";
 
 // === CONFIG ===
 const PORT = process.env.PORT || 10000;
-const PROJECT_ID = "gemini-live-477912";
-const LOCATION = "us-central1";
+const PROJECT_ID = process.env.GCP_PROJECT_ID;
+const LOCATION = process.env.GCP_LOCATION || "us-central1";
+const MODEL_ID = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const LANGUAGE_CODE = process.env.LANGUAGE_CODE || "en-US";
+const TTS_VOICE = process.env.TTS_VOICE || "en-US-Journey-F";
 
-// Real-time Gemini text model (fast, reliable)
+if (!PROJECT_ID) {
+  console.error("❌ GCP_PROJECT_ID is not set (see .env.example)");
+  process.exit(1);
+}
+
 const GEMINI_MODEL =
-  `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/gemini-1.5-flash`;
+  `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL_ID}`;
+const VERTEX_HOST =
+  LOCATION === "global"
+    ? "aiplatform.googleapis.com"
+    : `${LOCATION}-aiplatform.googleapis.com`;
 
 // === GOOGLE AUTH ===
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
@@ -151,7 +163,7 @@ async function speechToText(wavBase64) {
     config: {
       encoding: "LINEAR16",
       sampleRateHertz: 16000,
-      languageCode: "en-US",
+      languageCode: LANGUAGE_CODE,
     },
     audio: { content: wavBase64 },
   };
@@ -167,12 +179,12 @@ async function speechToText(wavBase64) {
 }
 
 // ------------------------------------------------------------
-//  GEMINI TEXT GENERATION
+//  GEMINI TEXT GENERATION (Vertex AI)
 // ------------------------------------------------------------
 async function geminiGenerate(userText) {
   const token = await getAccessToken();
 
-  const url = `https://${LOCATION}-aiplatform.googleapis.com/v1beta/${GEMINI_MODEL}:generateContent`;
+  const url = `https://${VERTEX_HOST}/v1beta/${GEMINI_MODEL}:generateContent`;
 
   const body = {
     contents: [
@@ -210,7 +222,7 @@ async function textToSpeech(text) {
 
   const body = {
     input: { text },
-    voice: { languageCode: "en-US", name: "en-US-Journey-F" },
+    voice: { languageCode: LANGUAGE_CODE, name: TTS_VOICE },
     audioConfig: { audioEncoding: "LINEAR16" },
   };
 
